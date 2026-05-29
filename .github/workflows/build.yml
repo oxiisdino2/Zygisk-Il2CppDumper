@@ -1,10 +1,11 @@
-name: Build
+name: Build ESP Module
 on:
   workflow_dispatch:
-      inputs:
-        package_name:
-          description: "Package name of the game:"
-          required: true
+    inputs:
+      package_name:
+        description: "Package name of the game:"
+        required: true
+        default: "com.dts.freefireth"
 
 jobs:
   build:
@@ -16,12 +17,12 @@ jobs:
         distribution: temurin
         java-version: 11
         cache: gradle
-    - run: |
+    - name: Build with NDK
+      run: |
         chmod +x ./gradlew
-        sed -i 's/moduleDescription = "/moduleDescription = "(${{ github.event.inputs.package_name }}) /g' module.gradle
         sed -i "s/com.game.packagename/${{ github.event.inputs.package_name }}/g" module/src/main/cpp/game.h
         ./gradlew :module:assembleRelease
     - uses: actions/upload-artifact@v4
       with:
-        name: zygisk-il2cppdumper
+        name: zygisk-ffesp
         path: out/magisk_module_release/

@@ -1,9 +1,9 @@
 ext {
-    moduleLibraryName = "il2cppdumper"
-    magiskModuleId = "zygisk_il2cppdumper"
-    moduleName = "Il2CppDumper"
-    moduleAuthor = "Perfare"
-    moduleDescription = "Il2CppDumper Zygisk version."
-    moduleVersion = "v1.2.0"
+    moduleLibraryName = "zygisk_ffesp"
+    magiskModuleId = "zygisk_ffesp"
+    moduleName = "FreeFire ESP"
+    moduleAuthor = "OxiisDino"
+    moduleDescription = "(com.dts.freefireth) Zygisk ESP module - draws lines, boxes, distance on screen."
+    moduleVersion = "v1.0"
     moduleVersionCode = 1
 }
