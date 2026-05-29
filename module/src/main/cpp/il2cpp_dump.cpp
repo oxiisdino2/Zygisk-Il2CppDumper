@@ -12,6 +12,8 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
+#include <pthread.h>
+#include <cstdio>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -24,6 +26,72 @@
 #undef DO_API
 
 static uint64_t il2cpp_base = 0;
+static std::string g_outDir;
+static bool g_api_ready = false;
+
+void dump_runtime_config(const char *out_dir) {
+    LOGI("dumping runtime config...");
+    auto outPath = std::string(out_dir).append("/files/initbase.cfg");
+    std::ofstream outStream(outPath);
+    outStream << "# Il2Cpp runtime config\n";
+    outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
+
+    size_t sz;
+    auto dmn = il2cpp_domain_get();
+    auto asms = il2cpp_domain_get_assemblies(dmn, &sz);
+
+    for (size_t i = 0; i < sz; ++i) {
+        auto img = il2cpp_assembly_get_image(asms[i]);
+        auto imgName = il2cpp_image_get_name(img);
+        if (strstr(imgName, "Assembly-CSharp") == nullptr) continue;
+
+        const char *targets[][2] = {
+            {"COW", "GameFacade"},
+            {"COW", "MatchGame"},
+            {"GCommon", "BaseGame"},
+            {"COW", "COWGameBase"},
+        };
+
+        for (size_t t = 0; t < 4; ++t) {
+            auto klass = il2cpp_class_from_name(img, targets[t][0], targets[t][1]);
+            if (!klass) { LOGW("Class not found: %s.%s", targets[t][0], targets[t][1]); continue; }
+            auto ns = il2cpp_class_get_namespace(klass);
+            auto cn = il2cpp_class_get_name(klass);
+            outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
+
+            void *fIter = nullptr;
+            while (auto field = il2cpp_class_get_fields(klass, &fIter)) {
+                auto fName = il2cpp_field_get_name(field);
+                auto fOff = il2cpp_field_get_offset(field);
+                auto attrs = il2cpp_field_get_flags(field);
+                outStream << "  " << fName << "=0x" << std::hex << fOff;
+                if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
+                    uint64_t val = 0;
+                    il2cpp_field_static_get_value(field, &val);
+                    outStream << " = 0x" << std::hex << val;
+                }
+                outStream << "\n";
+            }
+        }
+    }
+    outStream.close();
+    LOGI("runtime config dump done!");
+}
+
+void *trigger_thread(void *) {
+    while (true) {
+        sleep(3);
+        if (g_api_ready) {
+            auto triggerPath = g_outDir + "/files/trigger_dump";
+            if (access(triggerPath.c_str(), F_OK) == 0) {
+                LOGI("Trigger file detected, re-dumping...");
+                remove(triggerPath.c_str());
+                dump_runtime_config(g_outDir.c_str());
+            }
+        }
+    }
+    return nullptr;
+}
 
 void init_il2cpp_api(void *handle) {
 #define DO_API(r, n, p) {                      \
@@ -417,55 +485,7 @@ void il2cpp_dump(const char *outDir) {
         }
     }
 
-    // dump runtime config for targeted classes
-    {
-        LOGI("dumping runtime config...");
-        auto outPath = std::string(outDir).append("/files/initbase.cfg");
-        std::ofstream outStream(outPath);
-        outStream << "# Il2Cpp runtime config\n";
-        outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
-
-        size_t sz;
-        auto dmn = il2cpp_domain_get();
-        auto asms = il2cpp_domain_get_assemblies(dmn, &sz);
-
-        for (size_t i = 0; i < sz; ++i) {
-            auto img = il2cpp_assembly_get_image(asms[i]);
-            auto imgName = il2cpp_image_get_name(img);
-            if (strstr(imgName, "Assembly-CSharp") == nullptr) continue;
-
-            const char *targets[][2] = {
-                {"COW", "GameFacade"},
-                {"COW", "MatchGame"},
-                {"GCommon", "BaseGame"},
-                {"COW", "COWGameBase"},
-            };
-
-            for (size_t t = 0; t < 4; ++t) {
-                auto klass = il2cpp_class_from_name(img, targets[t][0], targets[t][1]);
-                if (!klass) { LOGW("Class not found: %s.%s", targets[t][0], targets[t][1]); continue; }
-                auto ns = il2cpp_class_get_namespace(klass);
-                auto cn = il2cpp_class_get_name(klass);
-                outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
-
-                void *fIter = nullptr;
-                while (auto field = il2cpp_class_get_fields(klass, &fIter)) {
-                    auto fName = il2cpp_field_get_name(field);
-                    auto fOff = il2cpp_field_get_offset(field);
-                    auto attrs = il2cpp_field_get_flags(field);
-                    outStream << "  " << fName << "=0x" << std::hex << fOff;
-                    if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
-                        uint64_t val = 0;
-                        il2cpp_field_static_get_value(field, &val);
-                        outStream << " = 0x" << std::hex << val;
-                    }
-                    outStream << "\n";
-                }
-            }
-        }
-        outStream.close();
-        LOGI("runtime config dump done!");
-    }
+    dump_runtime_config(outDir);
 
     LOGI("write dump file");
     auto outPath = std::string(outDir).append("/files/dump.cs");
@@ -477,4 +497,11 @@ void il2cpp_dump(const char *outDir) {
     }
     outStream.close();
     LOGI("dump done!");
+
+    g_outDir = outDir;
+    g_api_ready = true;
+    pthread_t t;
+    pthread_create(&t, nullptr, trigger_thread, nullptr);
+    pthread_detach(t);
+    LOGI("Re-dump ready - create trigger_dump file from shell");
 }
