@@ -12,6 +12,8 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
+#include <thread>
+#include <cstdio>
 #include <csignal>
 #include "xdl.h"
 #include "log.h"
@@ -31,10 +33,17 @@ static bool g_api_ready = false;
 // forward declaration
 void dump_runtime_config(const char *outDir);
 
-void sigusr1_handler(int sig) {
-    if (sig == SIGUSR1 && g_api_ready) {
-        LOGI("SIGUSR1 received, re-dumping runtime config...");
-        dump_runtime_config(g_outDir.c_str());
+void trigger_thread() {
+    while (true) {
+        sleep(3);
+        if (g_api_ready) {
+            auto triggerPath = g_outDir + "/files/trigger_dump";
+            if (access(triggerPath.c_str(), F_OK) == 0) {
+                LOGI("Trigger file detected, re-dumping...");
+                remove(triggerPath.c_str());
+                dump_runtime_config(g_outDir.c_str());
+            }
+        }
     }
 }
 
@@ -405,8 +414,7 @@ void il2cpp_api_init(void *handle) {
         return;
     }
 
-    signal(SIGUSR1, sigusr1_handler);
-    LOGI("SIGUSR1 handler registered for re-dump");
+    LOGI("Trigger thread will start after dump");
     while (!il2cpp_is_vm_thread(nullptr)) {
         LOGI("Waiting for il2cpp_init...");
         sleep(1);
@@ -503,5 +511,6 @@ void il2cpp_dump(const char *outDir) {
 
     g_outDir = outDir;
     g_api_ready = true;
-    LOGI("SIGUSR1 re-dump ready - send 'pkill -SIGUSR1 com.dts.freefireth' from shell");
+    std::thread(trigger_thread).detach();
+    LOGI("Re-dump ready - create /data/data/com.dts.freefireth/files/trigger_dump from shell");
 }
