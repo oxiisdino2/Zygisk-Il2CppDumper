@@ -416,6 +416,57 @@ void il2cpp_dump(const char *outDir) {
             }
         }
     }
+
+    // dump runtime config for targeted classes
+    {
+        LOGI("dumping runtime config...");
+        auto outPath = std::string(outDir).append("/files/initbase.cfg");
+        std::ofstream outStream(outPath);
+        outStream << "# Il2Cpp runtime config\n";
+        outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
+
+        size_t sz;
+        auto dmn = il2cpp_domain_get();
+        auto asms = il2cpp_domain_get_assemblies(dmn, &sz);
+
+        for (size_t i = 0; i < sz; ++i) {
+            auto img = il2cpp_assembly_get_image(asms[i]);
+            auto imgName = il2cpp_image_get_name(img);
+            if (strstr(imgName, "Assembly-CSharp") == nullptr) continue;
+
+            const char *targets[][2] = {
+                {"COW", "GameFacade"},
+                {"COW", "MatchGame"},
+                {"GCommon", "BaseGame"},
+                {"COW", "COWGameBase"},
+            };
+
+            for (size_t t = 0; t < 4; ++t) {
+                auto klass = il2cpp_class_from_name(img, targets[t][0], targets[t][1]);
+                if (!klass) { LOGW("Class not found: %s.%s", targets[t][0], targets[t][1]); continue; }
+                auto ns = il2cpp_class_get_namespace(klass);
+                auto cn = il2cpp_class_get_name(klass);
+                outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
+
+                void *fIter = nullptr;
+                while (auto field = il2cpp_class_get_fields(klass, &fIter)) {
+                    auto fName = il2cpp_field_get_name(field);
+                    auto fOff = il2cpp_field_get_offset(field);
+                    auto attrs = il2cpp_field_get_flags(field);
+                    outStream << "  " << fName << "=0x" << std::hex << fOff;
+                    if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
+                        uint64_t val = 0;
+                        il2cpp_field_static_get_value(field, &val);
+                        outStream << " = 0x" << std::hex << val;
+                    }
+                    outStream << "\n";
+                }
+            }
+        }
+        outStream.close();
+        LOGI("runtime config dump done!");
+    }
+
     LOGI("write dump file");
     auto outPath = std::string(outDir).append("/files/dump.cs");
     std::ofstream outStream(outPath);
