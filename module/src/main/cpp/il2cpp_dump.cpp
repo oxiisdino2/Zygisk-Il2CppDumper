@@ -322,6 +322,56 @@ std::string dump_type(const Il2CppType *type) {
     return outPut.str();
 }
 
+void dump_runtime_config(const char *outDir) {
+    LOGI("dumping runtime config...");
+    auto outPath = std::string(outDir).append("/files/initbase.cfg");
+    std::ofstream outStream(outPath);
+    outStream << "# Il2Cpp runtime config\n";
+    outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
+
+    size_t size;
+    auto domain = il2cpp_domain_get();
+    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
+
+    for (size_t i = 0; i < size; ++i) {
+        auto image = il2cpp_assembly_get_image(assemblies[i]);
+        auto imageName = il2cpp_image_get_name(image);
+
+        if (strstr(imageName, "Assembly-CSharp") == nullptr) {
+            continue;
+        }
+
+        outStream << "[" << imageName << "]\n";
+
+        size_t classCount = il2cpp_image_get_class_count(image);
+        for (size_t j = 0; j < classCount; ++j) {
+            auto klass = const_cast<Il2CppClass *>(il2cpp_image_get_class(image, j));
+            auto ns = il2cpp_class_get_namespace(klass);
+            auto cn = il2cpp_class_get_name(klass);
+            outStream << "  [" << (ns ? ns : "") << "." << cn << "]\n";
+
+            void *fieldIter = nullptr;
+            while (auto field = il2cpp_class_get_fields(klass, &fieldIter)) {
+                auto fieldName = il2cpp_field_get_name(field);
+                auto fieldOffset = il2cpp_field_get_offset(field);
+                auto attrs = il2cpp_field_get_flags(field);
+
+                outStream << "    " << fieldName << "=0x" << std::hex << fieldOffset;
+
+                if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
+                    uint64_t val = 0;
+                    il2cpp_field_static_get_value(field, &val);
+                    outStream << " = 0x" << std::hex << val;
+                }
+                outStream << "\n";
+            }
+        }
+    }
+
+    outStream.close();
+    LOGI("runtime config dump done!");
+}
+
 void il2cpp_api_init(void *handle) {
     LOGI("il2cpp_handle: %p", handle);
     init_il2cpp_api(handle);
@@ -426,4 +476,6 @@ void il2cpp_dump(const char *outDir) {
     }
     outStream.close();
     LOGI("dump done!");
+
+    dump_runtime_config(outDir);
 }
