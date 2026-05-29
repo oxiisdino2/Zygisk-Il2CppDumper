@@ -12,8 +12,6 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
-#include <pthread.h>
-#include <cstdio>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -26,25 +24,6 @@
 #undef DO_API
 
 static uint64_t il2cpp_base = 0;
-static std::string g_outDir;
-static bool g_api_ready = false;
-
-void dump_runtime_config(const char *outDir);
-
-void *trigger_thread(void *) {
-    while (true) {
-        sleep(3);
-        if (g_api_ready) {
-            auto triggerPath = g_outDir + "/files/trigger_dump";
-            if (access(triggerPath.c_str(), F_OK) == 0) {
-                LOGI("Trigger file detected, re-dumping...");
-                remove(triggerPath.c_str());
-                dump_runtime_config(g_outDir.c_str());
-            }
-        }
-    }
-    return nullptr;
-}
 
 void init_il2cpp_api(void *handle) {
 #define DO_API(r, n, p) {                      \
@@ -118,6 +97,7 @@ std::string dump_method(Il2CppClass *klass) {
     outPut << "\n\t// Methods\n";
     void *iter = nullptr;
     while (auto method = il2cpp_class_get_methods(klass, &iter)) {
+        //TODO attribute
         if (method->methodPointer) {
             outPut << "\t// RVA: 0x";
             outPut << std::hex << (uint64_t) method->methodPointer - il2cpp_base;
@@ -126,10 +106,14 @@ std::string dump_method(Il2CppClass *klass) {
         } else {
             outPut << "\t// RVA: 0x VA: 0x0";
         }
+        /*if (method->slot != 65535) {
+            outPut << " Slot: " << std::dec << method->slot;
+        }*/
         outPut << "\n\t";
         uint32_t iflags = 0;
         auto flags = il2cpp_method_get_flags(method, &iflags);
         outPut << get_method_modifier(flags);
+        //TODO genericContainerIndex
         auto return_type = il2cpp_method_get_return_type(method);
         if (_il2cpp_type_is_byref(return_type)) {
             outPut << "ref ";
@@ -166,6 +150,7 @@ std::string dump_method(Il2CppClass *klass) {
             outPut.seekp(-2, outPut.cur);
         }
         outPut << ") { }\n";
+        //TODO GenericInstMethod
     }
     return outPut.str();
 }
@@ -175,6 +160,7 @@ std::string dump_property(Il2CppClass *klass) {
     outPut << "\n\t// Properties\n";
     void *iter = nullptr;
     while (auto prop_const = il2cpp_class_get_properties(klass, &iter)) {
+        //TODO attribute
         auto prop = const_cast<PropertyInfo *>(prop_const);
         auto get = il2cpp_property_get_get_method(prop);
         auto set = il2cpp_property_get_set_method(prop);
@@ -214,6 +200,7 @@ std::string dump_field(Il2CppClass *klass) {
     auto is_enum = il2cpp_class_is_enum(klass);
     void *iter = nullptr;
     while (auto field = il2cpp_class_get_fields(klass, &iter)) {
+        //TODO attribute
         outPut << "\t";
         auto attrs = il2cpp_field_get_flags(field);
         auto access = attrs & FIELD_ATTRIBUTE_FIELD_ACCESS_MASK;
@@ -248,6 +235,7 @@ std::string dump_field(Il2CppClass *klass) {
         auto field_type = il2cpp_field_get_type(field);
         auto field_class = il2cpp_class_from_type(field_type);
         outPut << il2cpp_class_get_name(field_class) << " " << il2cpp_field_get_name(field);
+        //TODO 获取构造函数初始化后的字段值
         if (attrs & FIELD_ATTRIBUTE_LITERAL && is_enum) {
             uint64_t val = 0;
             il2cpp_field_static_get_value(field, &val);
@@ -266,6 +254,7 @@ std::string dump_type(const Il2CppType *type) {
     if (flags & TYPE_ATTRIBUTE_SERIALIZABLE) {
         outPut << "[Serializable]\n";
     }
+    //TODO attribute
     auto is_valuetype = il2cpp_class_is_valuetype(klass);
     auto is_enum = il2cpp_class_is_enum(klass);
     auto visibility = flags & TYPE_ATTRIBUTE_VISIBILITY_MASK;
@@ -305,7 +294,7 @@ std::string dump_type(const Il2CppType *type) {
     } else {
         outPut << "class ";
     }
-    outPut << il2cpp_class_get_name(klass);
+    outPut << il2cpp_class_get_name(klass); //TODO genericContainerIndex
     std::vector<std::string> extends;
     auto parent = il2cpp_class_get_parent(klass);
     if (!is_valuetype && !is_enum && parent) {
@@ -328,64 +317,9 @@ std::string dump_type(const Il2CppType *type) {
     outPut << dump_field(klass);
     outPut << dump_property(klass);
     outPut << dump_method(klass);
+    //TODO EventInfo
     outPut << "}\n";
     return outPut.str();
-}
-
-void dump_runtime_config(const char *outDir) {
-    LOGI("dumping runtime config...");
-    auto outPath = std::string(outDir).append("/files/initbase.cfg");
-    std::ofstream outStream(outPath);
-    outStream << "# Il2Cpp runtime config\n";
-    outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
-
-    size_t size;
-    auto domain = il2cpp_domain_get();
-    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
-
-    for (size_t i = 0; i < size; ++i) {
-        auto image = il2cpp_assembly_get_image(assemblies[i]);
-        auto imageName = il2cpp_image_get_name(image);
-
-        if (strstr(imageName, "Assembly-CSharp") == nullptr) {
-            continue;
-        }
-
-        const char *targetClasses[][2] = {
-            {"COW", "GameFacade"},
-            {"COW", "MatchGame"},
-            {"GCommon", "BaseGame"},
-            {"COW", "COWGameBase"},
-        };
-
-        for (size_t t = 0; t < 4; ++t) {
-            auto klass = il2cpp_class_from_name(image, targetClasses[t][0], targetClasses[t][1]);
-            if (klass) {
-                auto ns = il2cpp_class_get_namespace(klass);
-                auto cn = il2cpp_class_get_name(klass);
-                outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
-
-                void *fieldIter = nullptr;
-                while (auto field = il2cpp_class_get_fields(klass, &fieldIter)) {
-                    auto fieldName = il2cpp_field_get_name(field);
-                    auto fieldOffset = il2cpp_field_get_offset(field);
-                    auto attrs = il2cpp_field_get_flags(field);
-
-                    outStream << "  " << fieldName << "=0x" << std::hex << fieldOffset;
-
-                    if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
-                        uint64_t val = 0;
-                        il2cpp_field_static_get_value(field, &val);
-                        outStream << " = 0x" << std::hex << val;
-                    }
-                    outStream << "\n";
-                }
-            }
-        }
-    }
-
-    outStream.close();
-    LOGI("runtime config dump done!");
 }
 
 void il2cpp_api_init(void *handle) {
@@ -401,8 +335,10 @@ void il2cpp_api_init(void *handle) {
         LOGE("Failed to initialize il2cpp api.");
         return;
     }
-
-    // Don't wait for VM thread - this runs in a detached thread from JNI_OnLoad
+    while (!il2cpp_is_vm_thread(nullptr)) {
+        LOGI("Waiting for il2cpp_init...");
+        sleep(1);
+    }
     auto domain = il2cpp_domain_get();
     il2cpp_thread_attach(domain);
 }
@@ -420,6 +356,7 @@ void il2cpp_dump(const char *outDir) {
     std::vector<std::string> outPuts;
     if (il2cpp_image_get_class) {
         LOGI("Version greater than 2018.3");
+        //使用il2cpp_image_get_class
         for (int i = 0; i < size; ++i) {
             auto image = il2cpp_assembly_get_image(assemblies[i]);
             std::stringstream imageStr;
@@ -428,12 +365,14 @@ void il2cpp_dump(const char *outDir) {
             for (int j = 0; j < classCount; ++j) {
                 auto klass = il2cpp_image_get_class(image, j);
                 auto type = il2cpp_class_get_type(const_cast<Il2CppClass *>(klass));
+                //LOGD("type name : %s", il2cpp_type_get_name(type));
                 auto outPut = imageStr.str() + dump_type(type);
                 outPuts.push_back(outPut);
             }
         }
     } else {
         LOGI("Version less than 2018.3");
+        //使用反射
         auto corlib = il2cpp_get_corlib();
         auto assemblyClass = il2cpp_class_from_name(corlib, "System.Reflection", "Assembly");
         auto assemblyLoad = il2cpp_class_get_method_from_name(assemblyClass, "Load", 1);
@@ -457,19 +396,21 @@ void il2cpp_dump(const char *outDir) {
             std::stringstream imageStr;
             auto image_name = il2cpp_image_get_name(image);
             imageStr << "\n// Dll : " << image_name;
+            //LOGD("image name : %s", image->name);
             auto imageName = std::string(image_name);
             auto pos = imageName.rfind('.');
             auto imageNameNoExt = imageName.substr(0, pos);
             auto assemblyFileName = il2cpp_string_new(imageNameNoExt.data());
             auto reflectionAssembly = ((Assembly_Load_ftn) assemblyLoad->methodPointer)(nullptr,
-                                                                                         assemblyFileName,
-                                                                                         nullptr);
+                                                                                        assemblyFileName,
+                                                                                        nullptr);
             auto reflectionTypes = ((Assembly_GetTypes_ftn) assemblyGetTypes->methodPointer)(
                     reflectionAssembly, nullptr);
             auto items = reflectionTypes->vector;
             for (int j = 0; j < reflectionTypes->max_length; ++j) {
                 auto klass = il2cpp_class_from_system_type((Il2CppReflectionType *) items[j]);
                 auto type = il2cpp_class_get_type(klass);
+                //LOGD("type name : %s", il2cpp_type_get_name(type));
                 auto outPut = imageStr.str() + dump_type(type);
                 outPuts.push_back(outPut);
             }
@@ -485,13 +426,4 @@ void il2cpp_dump(const char *outDir) {
     }
     outStream.close();
     LOGI("dump done!");
-
-    dump_runtime_config(outDir);
-
-    g_outDir = outDir;
-    g_api_ready = true;
-    pthread_t t;
-    pthread_create(&t, nullptr, trigger_thread, nullptr);
-    pthread_detach(t);
-    LOGI("Re-dump ready - create /data/data/com.dts.freefireth/files/trigger_dump from shell");
 }
