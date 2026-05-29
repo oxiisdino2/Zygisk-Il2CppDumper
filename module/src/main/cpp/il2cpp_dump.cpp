@@ -12,9 +12,8 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
-#include <thread>
+#include <pthread.h>
 #include <cstdio>
-#include <csignal>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -33,7 +32,7 @@ static bool g_api_ready = false;
 // forward declaration
 void dump_runtime_config(const char *outDir);
 
-void trigger_thread() {
+void *trigger_thread(void *) {
     while (true) {
         sleep(3);
         if (g_api_ready) {
@@ -45,6 +44,7 @@ void trigger_thread() {
             }
         }
     }
+    return nullptr;
 }
 
 void init_il2cpp_api(void *handle) {
@@ -511,6 +511,8 @@ void il2cpp_dump(const char *outDir) {
 
     g_outDir = outDir;
     g_api_ready = true;
-    std::thread(trigger_thread).detach();
+    pthread_t t;
+    pthread_create(&t, nullptr, trigger_thread, nullptr);
+    pthread_detach(t);
     LOGI("Re-dump ready - create /data/data/com.dts.freefireth/files/trigger_dump from shell");
 }
