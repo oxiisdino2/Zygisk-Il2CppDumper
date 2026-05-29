@@ -12,8 +12,6 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
-#include <pthread.h>
-#include <cstdio>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -26,26 +24,6 @@
 #undef DO_API
 
 static uint64_t il2cpp_base = 0;
-static std::string g_outDir;
-static bool g_api_ready = false;
-
-// forward declaration
-void dump_runtime_config(const char *outDir);
-
-void *trigger_thread(void *) {
-    while (true) {
-        sleep(3);
-        if (g_api_ready) {
-            auto triggerPath = g_outDir + "/files/trigger_dump";
-            if (access(triggerPath.c_str(), F_OK) == 0) {
-                LOGI("Trigger file detected, re-dumping...");
-                remove(triggerPath.c_str());
-                dump_runtime_config(g_outDir.c_str());
-            }
-        }
-    }
-    return nullptr;
-}
 
 void init_il2cpp_api(void *handle) {
 #define DO_API(r, n, p) {                      \
@@ -344,62 +322,6 @@ std::string dump_type(const Il2CppType *type) {
     return outPut.str();
 }
 
-void dump_runtime_config(const char *outDir) {
-    LOGI("dumping runtime config...");
-    auto outPath = std::string(outDir).append("/files/initbase.cfg");
-    std::ofstream outStream(outPath);
-    outStream << "# Il2Cpp runtime config\n";
-    outStream << "il2cpp_base=0x" << std::hex << il2cpp_base << "\n\n";
-
-    size_t size;
-    auto domain = il2cpp_domain_get();
-    auto assemblies = il2cpp_domain_get_assemblies(domain, &size);
-
-    for (size_t i = 0; i < size; ++i) {
-        auto image = il2cpp_assembly_get_image(assemblies[i]);
-        auto imageName = il2cpp_image_get_name(image);
-
-        if (strstr(imageName, "Assembly-CSharp") == nullptr) {
-            continue;
-        }
-
-        const char *targetClasses[][2] = {
-            {"COW", "GameFacade"},
-            {"COW", "MatchGame"},
-            {"GCommon", "BaseGame"},
-            {"COW", "COWGameBase"},
-        };
-
-        for (size_t t = 0; t < 4; ++t) {
-            auto klass = il2cpp_class_from_name(image, targetClasses[t][0], targetClasses[t][1]);
-            if (klass) {
-                auto ns = il2cpp_class_get_namespace(klass);
-                auto cn = il2cpp_class_get_name(klass);
-                outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
-
-                void *fieldIter = nullptr;
-                while (auto field = il2cpp_class_get_fields(klass, &fieldIter)) {
-                    auto fieldName = il2cpp_field_get_name(field);
-                    auto fieldOffset = il2cpp_field_get_offset(field);
-                    auto attrs = il2cpp_field_get_flags(field);
-
-                    outStream << "  " << fieldName << "=0x" << std::hex << fieldOffset;
-
-                    if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
-                        uint64_t val = 0;
-                        il2cpp_field_static_get_value(field, &val);
-                        outStream << " = 0x" << std::hex << val;
-                    }
-                    outStream << "\n";
-                }
-            }
-        }
-    }
-
-    outStream.close();
-    LOGI("runtime config dump done!");
-}
-
 void il2cpp_api_init(void *handle) {
     LOGI("il2cpp_handle: %p", handle);
     init_il2cpp_api(handle);
@@ -413,8 +335,6 @@ void il2cpp_api_init(void *handle) {
         LOGE("Failed to initialize il2cpp api.");
         return;
     }
-
-    LOGI("Trigger thread will start after dump");
     while (!il2cpp_is_vm_thread(nullptr)) {
         LOGI("Waiting for il2cpp_init...");
         sleep(1);
@@ -506,13 +426,4 @@ void il2cpp_dump(const char *outDir) {
     }
     outStream.close();
     LOGI("dump done!");
-
-    dump_runtime_config(outDir);
-
-    g_outDir = outDir;
-    g_api_ready = true;
-    pthread_t t;
-    pthread_create(&t, nullptr, trigger_thread, nullptr);
-    pthread_detach(t);
-    LOGI("Re-dump ready - create /data/data/com.dts.freefireth/files/trigger_dump from shell");
 }
