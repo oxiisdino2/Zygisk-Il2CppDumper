@@ -12,6 +12,7 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
+#include <csignal>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -24,6 +25,18 @@
 #undef DO_API
 
 static uint64_t il2cpp_base = 0;
+static std::string g_outDir;
+static bool g_api_ready = false;
+
+// forward declaration
+void dump_runtime_config(const char *outDir);
+
+void sigusr1_handler(int sig) {
+    if (sig == SIGUSR1 && g_api_ready) {
+        LOGI("SIGUSR1 received, re-dumping runtime config...");
+        dump_runtime_config(g_outDir.c_str());
+    }
+}
 
 void init_il2cpp_api(void *handle) {
 #define DO_API(r, n, p) {                      \
@@ -391,6 +404,9 @@ void il2cpp_api_init(void *handle) {
         LOGE("Failed to initialize il2cpp api.");
         return;
     }
+
+    signal(SIGUSR1, sigusr1_handler);
+    LOGI("SIGUSR1 handler registered for re-dump");
     while (!il2cpp_is_vm_thread(nullptr)) {
         LOGI("Waiting for il2cpp_init...");
         sleep(1);
@@ -484,4 +500,8 @@ void il2cpp_dump(const char *outDir) {
     LOGI("dump done!");
 
     dump_runtime_config(outDir);
+
+    g_outDir = outDir;
+    g_api_ready = true;
+    LOGI("SIGUSR1 re-dump ready - send 'pkill -SIGUSR1 com.dts.freefireth' from shell");
 }
