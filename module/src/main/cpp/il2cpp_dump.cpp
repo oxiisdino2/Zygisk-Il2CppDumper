@@ -341,29 +341,35 @@ void dump_runtime_config(const char *outDir) {
             continue;
         }
 
-        outStream << "[" << imageName << "]\n";
+        const char *targetClasses[][2] = {
+            {"COW", "GameFacade"},
+            {"COW", "MatchGame"},
+            {"GCommon", "BaseGame"},
+            {"COW", "COWGameBase"},
+        };
 
-        size_t classCount = il2cpp_image_get_class_count(image);
-        for (size_t j = 0; j < classCount; ++j) {
-            auto klass = const_cast<Il2CppClass *>(il2cpp_image_get_class(image, j));
-            auto ns = il2cpp_class_get_namespace(klass);
-            auto cn = il2cpp_class_get_name(klass);
-            outStream << "  [" << (ns ? ns : "") << "." << cn << "]\n";
+        for (size_t t = 0; t < 4; ++t) {
+            auto klass = il2cpp_class_from_name(image, targetClasses[t][0], targetClasses[t][1]);
+            if (klass) {
+                auto ns = il2cpp_class_get_namespace(klass);
+                auto cn = il2cpp_class_get_name(klass);
+                outStream << "[" << (ns ? ns : "") << "." << cn << "]\n";
 
-            void *fieldIter = nullptr;
-            while (auto field = il2cpp_class_get_fields(klass, &fieldIter)) {
-                auto fieldName = il2cpp_field_get_name(field);
-                auto fieldOffset = il2cpp_field_get_offset(field);
-                auto attrs = il2cpp_field_get_flags(field);
+                void *fieldIter = nullptr;
+                while (auto field = il2cpp_class_get_fields(klass, &fieldIter)) {
+                    auto fieldName = il2cpp_field_get_name(field);
+                    auto fieldOffset = il2cpp_field_get_offset(field);
+                    auto attrs = il2cpp_field_get_flags(field);
 
-                outStream << "    " << fieldName << "=0x" << std::hex << fieldOffset;
+                    outStream << "  " << fieldName << "=0x" << std::hex << fieldOffset;
 
-                if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
-                    uint64_t val = 0;
-                    il2cpp_field_static_get_value(field, &val);
-                    outStream << " = 0x" << std::hex << val;
+                    if (attrs & FIELD_ATTRIBUTE_STATIC && !(attrs & FIELD_ATTRIBUTE_LITERAL)) {
+                        uint64_t val = 0;
+                        il2cpp_field_static_get_value(field, &val);
+                        outStream << " = 0x" << std::hex << val;
+                    }
+                    outStream << "\n";
                 }
-                outStream << "\n";
             }
         }
     }
