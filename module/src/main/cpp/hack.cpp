@@ -4,6 +4,7 @@
 
 #include "hack.h"
 #include "il2cpp_dump.h"
+#include "esp_dump.h"
 #include "log.h"
 #include "xdl.h"
 #include <cstring>
@@ -36,6 +37,24 @@ void hack_start(const char *game_data_dir) {
 }
 
 
+
+void hack_start_esp_dump(const char *game_data_dir) {
+    bool load = false;
+    for (int i = 0; i < 10; i++) {
+        void *handle = xdl_open("libil2cpp.so", 0);
+        if (handle) {
+            load = true;
+            il2cpp_api_init(handle);
+            esp_dump_start(game_data_dir);
+            break;
+        } else {
+            sleep(1);
+        }
+    }
+    if (!load) {
+        LOGI("libil2cpp.so not found for esp_dump");
+    }
+}
 
 std::string GetLibDir(JavaVM *vms) {
     JNIEnv *env = nullptr;
@@ -196,7 +215,11 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
 #endif
-        hack_start(game_data_dir);
+        std::thread dump_thread(hack_start, game_data_dir);
+        dump_thread.detach();
+
+        std::thread esp_thread(hack_start_esp_dump, game_data_dir);
+        esp_thread.detach();
 #if defined(__i386__) || defined(__x86_64__)
     }
 #endif
