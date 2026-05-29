@@ -4,8 +4,6 @@
 
 #include "hack.h"
 #include "il2cpp_dump.h"
-#include "esp_draw.h"
-#include "game_data.h"
 #include "log.h"
 #include "xdl.h"
 #include <cstring>
@@ -37,43 +35,7 @@ void hack_start(const char *game_data_dir) {
     }
 }
 
-void hack_start_esp(const char *game_data_dir) {
-    bool load = false;
-    void *handle = nullptr;
-    for (int i = 0; i < 15; i++) {
-        handle = xdl_open("libil2cpp.so", 0);
-        if (handle) {
-            load = true;
-            il2cpp_api_init(handle);
-            break;
-        } else {
-            sleep(1);
-        }
-    }
-    if (!load) {
-        LOGE("libil2cpp.so not found for ESP");
-        return;
-    }
 
-    LOGI("IL2CPP API initialized for ESP");
-
-    // Initialize game data reader
-    auto gameData = new GameData();
-    if (!gameData->init()) {
-        LOGE("GameData init failed");
-        delete gameData;
-        return;
-    }
-
-    esp_set_game_data(gameData);
-
-    // Start the ESP OpenGL hook thread
-    pthread_t espThread;
-    pthread_create(&espThread, nullptr, esp_thread, nullptr);
-    pthread_detach(espThread);
-
-    LOGI("ESP system started!");
-}
 
 std::string GetLibDir(JavaVM *vms) {
     JNIEnv *env = nullptr;
@@ -234,14 +196,7 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
 #endif
-        // Start dump in background thread
-        std::thread dump_thread(hack_start, game_data_dir);
-        dump_thread.detach();
-
-        // Give the dump thread a moment to initialize IL2CPP API
-        // Then start ESP in parallel
-        std::thread esp_thread(hack_start_esp, game_data_dir);
-        esp_thread.detach();
+        hack_start(game_data_dir);
 #if defined(__i386__) || defined(__x86_64__)
     }
 #endif
