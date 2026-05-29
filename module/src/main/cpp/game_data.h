@@ -249,9 +249,6 @@ inline bool GameData::resolveStaticFields() {
         break;
     }
 
-    // Alternative: use class static field data
-    // This is an internal API exposed in our header
-    extern void* il2cpp_class_get_static_field_data(Il2CppClass* klass);
     m_staticFieldsBase = il2cpp_class_get_static_field_data(m_gameFacadeClass);
     if (m_staticFieldsBase) {
         LOGI("GameFacade static fields base: %p", m_staticFieldsBase);

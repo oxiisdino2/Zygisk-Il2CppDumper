@@ -346,8 +346,8 @@ EGLBoolean esp_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     return original_eglSwapBuffers(dpy, surface);
 }
 
+#if defined(__x86_64__)
 // x86_64 inline hook: overwrite first 14 bytes with jmp + nops
-// Trampoline: saved 14 bytes + jmp to target+14
 static bool install_inline_hook(void* target, void* hook, void** original) {
     if (!target || !hook) return false;
 
@@ -359,7 +359,6 @@ static bool install_inline_hook(void* target, void* hook, void** original) {
 
     memcpy(g_orig_bytes, target, HOOK_SAVED_SIZE);
 
-    // Allocate trampoline
     g_trampoline = mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (!g_trampoline || g_trampoline == MAP_FAILED) {
@@ -367,25 +366,29 @@ static bool install_inline_hook(void* target, void* hook, void** original) {
         return false;
     }
 
-    // Build trampoline: saved bytes + jmp to target+HOOK_SAVED_SIZE
     auto tramp = (unsigned char*)g_trampoline;
     memcpy(tramp, g_orig_bytes, HOOK_SAVED_SIZE);
     int64_t jmp_back = ((int64_t)target + HOOK_SAVED_SIZE) - ((int64_t)tramp + HOOK_SAVED_SIZE + 5);
     tramp[HOOK_SAVED_SIZE] = 0xE9;
     *(int32_t*)(tramp + HOOK_SAVED_SIZE + 1) = (int32_t)jmp_back;
-
     *original = (void*)g_trampoline;
 
-    // Write hook jmp at target
     auto t = (unsigned char*)target;
     int64_t jmp_hook = (int64_t)hook - (int64_t)target - 5;
     t[0] = 0xE9;
     *(int32_t*)(t + 1) = (int32_t)jmp_hook;
-    memset(t + 5, 0x90, HOOK_SAVED_SIZE - 5); // NOP padding
+    memset(t + 5, 0x90, HOOK_SAVED_SIZE - 5);
 
     LOGI("Inline hook installed: target=%p hook=%p trampoline=%p", target, hook, g_trampoline);
     return true;
 }
+#else
+// ARM64 or other arch: stub (inline hook not implemented yet)
+static bool install_inline_hook(void* target, void* hook, void** original) {
+    LOGE("Inline hook not implemented for this architecture");
+    return false;
+}
+#endif
 
 static bool hook_egl() {
     if (g_hook_installed) return true;
